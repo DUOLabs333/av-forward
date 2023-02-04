@@ -8,9 +8,9 @@ args = parser.parse_args()
 
 if not args.folder:
     if args.mode=="client":
-        args.folder="~/Mounts/Macbook"
+        args.folder=os.path.expanduser("~/Mounts/Macbook")
     else:
-        args.folder="~/Services/arch/data/shared"
+        args.folder=os.path.expanduser("~/Services/arch/data/shared")
 
 if args.mode=="server":
     subprocess.run(["sudo","touch",os.path.join(args.folder,'av-forward.camera.socket')])
