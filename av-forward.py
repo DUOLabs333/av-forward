@@ -1,7 +1,7 @@
 import subprocess
 import argparse,os
 parser = argparse.ArgumentParser(description='Forward MacOS camera/microphone to Linux VM')
-parser.add_argument(dest="mode",metavar="MODE",choices=["client","server"],required=True)
+parser.add_argument(dest="mode",metavar="MODE",choices=["client","server"])
 parser.add_argument("-f","--folder",dest="folder",metavar="FOLDER",default=None)
 
 args = parser.parse_args()
