@@ -13,7 +13,9 @@ if not args.folder:
         args.folder=os.path.expanduser("~/Services/arch/data/shared")
 
 if args.mode=="server":
-    subprocess.run(["sudo","touch",os.path.join(args.folder,'av-forward.camera.socket')])
-    subprocess.run(["sudo","ffmpeg", "-f", "avfoundation", "-framerate","30","-i", "0", "-f", "mpegts","-listen","1",f"unix:{os.path.join(args.folder,'av-forward.camera.socket')}"])
+    subprocess.run(["sudo","rm","-f",os.path.join(args.folder,"av-forward.camera.socket")])
+    with subprocess.Popen(["sudo","ffmpeg", "-f", "avfoundation", "-framerate","30","-i", "0", "-f", "mpegts","-"],stdout=subprocess.PIPE) as process:
+        subprocess.run(["sudo","nc","-Ulk",os.path.join(args.folder,"av-forward.camera.socket")],stdin=process.stdout)
+    #os.system(f'ffmpeg -f avfoundation -framerate 30 -i "0" -f mpegts - | sudo nc -Ulk {os.path.join(args.folder,"av-forward.camera.socket")}')
 else:
     subprocess.run(["sudo","ffmpeg", "-i",f"unix:{os.path.join(args.folder,'av-forward.camera.socket')}", "-vf", "format=yuv420p","-f", "v4l2","/dev/video0"])
