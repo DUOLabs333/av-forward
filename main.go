@@ -114,7 +114,7 @@ func toggle() {
 			}
 			
 			if client{
-			ffmpeg = exec.Command("ffmpeg", "-f", "lavfi", "-i", "color=size=640x480:rate=25:color=black", "-f", "v4l2", CAM_FILE) //Black screen is used as a "turned off"
+			ffmpeg = exec.Command("ffmpeg", "-f", "lavfi", "-i", "color=size=1280x720:rate=25:color=black","-f", "v4l2", CAM_FILE) //Black screen is used as a "turned off"
 			//ffmpeg.Stderr=os.Stderr
 			ffmpeg.Start()
 			waitUntilFileIsOpen(ffmpeg.Process.Pid) //This prevents a bug where we rapidly switch between turning off and on
@@ -125,12 +125,12 @@ func toggle() {
 			if client{
 			ffmpeg.Process.Kill()
 			ffmpeg.Process.Wait()
-			ffmpeg = exec.Command("ffmpeg","-fflags", "nobuffer", "-flags", "low_delay", "-strict", "experimental", "-i", fmt.Sprintf("http://%s:8000", *host), "-vf", "format=yuv420p", "-f", "v4l2", CAM_FILE)
+			ffmpeg = exec.Command("ffmpeg","-fflags", "nobuffer", "-flags", "low_delay", "-strict", "experimental", "-i", fmt.Sprintf("http://%s:8000", *host),"-b:v","1000k", "-vf", "format=yuv420p", "-f", "v4l2", CAM_FILE)
 			}else{
-				ffmpeg = exec.Command("ffmpeg", "-f", "avfoundation", "-framerate", "30", "-i", "0", "-vcodec", "mpeg1video", "-f", "mpegts", "-")
+				ffmpeg = exec.Command("ffmpeg", "-f", "avfoundation", "-framerate", "30","-video_size","1280x720","-i", "0", "-b:v","1000k", "-vcodec", "mpeg1video", "-f", "mpegts", "-")
 				stdout , _ = ffmpeg.StdoutPipe()
 			}
-			//ffmpeg.Stderr = os.Stderr
+			ffmpeg.Stderr = os.Stderr
 			ffmpeg.Start()
 			if !client{
 				go io.Copy(stdin,stdout)
