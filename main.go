@@ -11,9 +11,11 @@ import (
 	"syscall"
 	"runtime"
 	"strings"
+	"io"
 )
 
 var ffmpeg *exec.Cmd
+var stdin io.WriteCloser
 var host *string
 var client bool
 //Set host based on operating system
@@ -36,6 +38,12 @@ func PidExists(pid int) (bool, error) {
 	}
 	err = proc.Signal(syscall.Signal(0))
 	if err == nil {
+		status,_:= exec.Command("ps","-ostat=",strconv.Itoa(pid)).Output()
+		if string(status)=="Z"{ //Zombie process
+			fmt.Println(err)
+			proc.Wait()
+			return false, nil
+		}
 		return true, nil
 	}
 	if err.Error() == "os: process already finished" {
@@ -56,9 +64,11 @@ func PidExists(pid int) (bool, error) {
 func waitUntilFileIsOpen(pid int) {
 	for true {
 		ret, _ := PidExists(pid)
+			
 		if !ret { //If the process no longer exists, there's no reason to wait
 			break
 		}
+		
 		pids := make(map[string][]int)
 		lsof.TryReadFdDir([]string{strconv.Itoa(pid)}, CheckForVideoFile, pids, nil)
 		if len(pids[CAM_FILE]) > 0 {
@@ -71,23 +81,31 @@ func toggle() {
 	var numConn int
 	var started bool = true
 	var ffmpeg_proc_exists bool
+	var stdout io.ReadCloser
 	for true {
 		if client{
 		pids, _ := lsof.Scan(CheckForVideoFile)
 		numConn = len(pids[CAM_FILE])
 		}else{
-		conns,_ := exec.Command("lsof", "-i", "tcp:8000", "-sTCP:ESTABLISHED", "-t").Output()
-		conns=strings.TrimRight(conns, "\n")
-		numConn=len(strings.Split(conns, "\n"))
-		numConn+=1 //Count the ffmpeg server as a connection to be compatible with the client code
+		numConn=0
+		conns_bytes,_ := exec.Command("lsof", "-i", fmt.Sprintf("tcp@%s:8000",*host), "-sTCP:ESTABLISHED", "-t").Output()
+		conns := string(conns_bytes)
+		for _,conn := range strings.Split(conns, "\n"){
+			if len(conn)>0{ //Non-empty string
+				numConn+=1
+			}
 		}
-		// fmt.Println(numConn)
+		if !started{ //Count the ffmpeg server as a connection to be compatible with the client code
+			numConn+=1
+		}
+		}
+		//fmt.Println(numConn)
 		
-		if !started {
+		if !started && ((!client && on) || (client)) {
 			ffmpeg_proc_exists, _ = PidExists(ffmpeg.Process.Pid)
 		}
 
-		if on && (numConn <= 1 || !ffmpeg_proc_exists) { //Turning off --- only the ffmpeg process is connected or can't connect to the host's camera
+		if on && (numConn <= 1 || !ffmpeg_proc_exists) { //Turning off --- only if the ffmpeg process is connected in the first place or can't connect to the host's camera
 			if !started { //When we first start, ffmpeg isn't running, so there's nothing to kill
 				ffmpeg.Process.Kill()
 				ffmpeg.Process.Wait()
@@ -104,30 +122,26 @@ func toggle() {
 			on = false
 
 		} else if !on && numConn > 1 { //Turning on
+			if client{
 			ffmpeg.Process.Kill()
 			ffmpeg.Process.Wait()
-			if client{
 			ffmpeg = exec.Command("ffmpeg","-fflags", "nobuffer", "-flags", "low_delay", "-strict", "experimental", "-i", fmt.Sprintf("http://%s:8000", *host), "-vf", "format=yuv420p", "-f", "v4l2", CAM_FILE)
 			}else{
 				ffmpeg = exec.Command("ffmpeg", "-f", "avfoundation", "-framerate", "30", "-i", "0", "-vcodec", "mpeg1video", "-f", "mpegts", "-")
-				tail:=exec.Command("stdbuf", "-i0", "-o0", "-e0","tail","-c","+1","-f","/dev/stdin") //Tail buffers, which makes things very slow
-				netcat := exec.Command("nc", "-lk", *host, "8000")
-				stdout , _ := ffmpeg.StdoutPipe()
-				tail.Stdin=stdout
-				stdout , _ = tail.StdoutPipe()
-				netcat.Stdin=stdout
-				tail.Start()
-				netcat.Start()
+				stdout , _ = ffmpeg.StdoutPipe()
 			}
-			ffmpeg.Stderr = os.Stderr
+			//ffmpeg.Stderr = os.Stderr
 			ffmpeg.Start()
+			if !client{
+				go io.Copy(stdin,stdout)
+			}else{
 			waitUntilFileIsOpen(ffmpeg.Process.Pid) //See previous call
+			}
 			on = true
 		}
 	}
 }
 func main() {
-	signal.Ignore(syscall.SIGCHLD) //Prevent zombie children
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
 	host=flag.String("host","127.0.0.1","IP where the server will be running on/where the client will be pulling from")
@@ -142,8 +156,13 @@ func main() {
 		exec.Command("modprobe", "-r", "v4l2loopback").Run()
 		exec.Command("modprobe", "v4l2loopback", fmt.Sprintf("video_nr=%d", CAM_NUM), `"card_label='Facetime HD Camera"`, "exclusive_caps=1").Run()
 		exec.Command("v4l2-ctl", "-d", CAM_FILE, "-c", "timeout=3000").Run()
+	}else{
+		netcat := exec.Command("nc", "-lk", *host, "8000")
+		stdin , _ = netcat.StdinPipe()
+		netcat.Start()
 	}
-	toggle()
+		
+	go toggle()
 	<-sigs
 	ffmpeg.Process.Kill()
 }
