@@ -1,7 +1,9 @@
 package main
 
 import (
+	"av-forward/command"
 	"av-forward/lsof"
+	"av-forward/server"
 	"flag"
 	"fmt"
 	"os"
@@ -127,7 +129,7 @@ func toggle() {
 			ffmpeg.Process.Wait()
 			ffmpeg = exec.Command("ffmpeg","-fflags", "nobuffer", "-flags", "low_delay", "-strict", "experimental", "-i", fmt.Sprintf("http://%s:8000", *host),"-b:v","1000k", "-vf", "format=yuv420p", "-f", "v4l2", CAM_FILE)
 			}else{
-				ffmpeg = exec.Command("ffmpeg", "-f", "avfoundation", "-framerate", "30","-video_size","1280x720","-i", "0", "-b:v","1000k", "-vcodec", "mpeg1video", "-f", "mpegts", "-")
+				ffmpeg = command.Run("ffmpeg", "-f", "avfoundation", "-framerate", "30","-video_size","1280x720","-i", "0", "-b:v","1000k", "-vcodec", "mpeg1video", "-f", "mpegts", "-")
 				stdout , _ = ffmpeg.StdoutPipe()
 			}
 			ffmpeg.Stderr = os.Stderr
@@ -142,6 +144,7 @@ func toggle() {
 	}
 }
 func main() {
+	command.Register()
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
 	host=flag.String("host","127.0.0.1","IP where the server will be running on/where the client will be pulling from")
@@ -157,9 +160,12 @@ func main() {
 		exec.Command("modprobe", "v4l2loopback", fmt.Sprintf("video_nr=%d", CAM_NUM), `"card_label='Facetime HD Camera"`, "exclusive_caps=1").Run()
 		exec.Command("v4l2-ctl", "-d", CAM_FILE, "-c", "timeout=3000").Run()
 	}else{
-		netcat := exec.Command("nc", "-lk", *host, "8000")
-		stdin , _ = netcat.StdinPipe()
-		netcat.Start()
+		//netcat := exec.Command("nc", "-lk", *host, "8000")
+		//stdin , _ = netcat.StdinPipe()
+		//netcat.Start()
+		server:=new(server.Server)
+		server.Start(*host,8000)
+		stdin=server.Writer
 	}
 		
 	go toggle()
