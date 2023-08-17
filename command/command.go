@@ -8,7 +8,6 @@ import (
 // #cgo LDFLAGS:
 /*
 int ffmpeg_main(int argc, char** argv);
-int lsof_main(int argc, char** argv);
 typedef int(*program_type)(int,char**);
 
 int call_program(program_type program, int argc, char** argv){
@@ -29,7 +28,6 @@ func Register(){ //Run function if you are a child
 
 	var args=os.Args[1:]
 	entry_points["ffmpeg"]=C.ffmpeg_main;
-	entry_points["lsof"]=C.lsof_main;
 
 	entry_point,ok:=entry_points[args[0]]
 	if (!ok){

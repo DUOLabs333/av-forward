@@ -1,7 +1,7 @@
 package main
 
 import (
-	"av-forward/command"
+	//"av-forward/command"
 	"av-forward/lsof"
 	"av-forward/server"
 	"flag"
@@ -90,7 +90,7 @@ func toggle() {
 		numConn = len(pids[CAM_FILE])
 		}else{
 		numConn=0
-		conns_bytes,_ := command.Run("lsof", "-i", fmt.Sprintf("tcp@%s:8000",*host), "-sTCP:ESTABLISHED", "-t").Output()
+		conns_bytes,_ := exec.Command("lsof", "-i", fmt.Sprintf("tcp@%s:8000",*host), "-sTCP:ESTABLISHED", "-t").Output()
 		conns := string(conns_bytes)
 
 		for _,conn := range strings.Split(conns, "\n"){
@@ -130,7 +130,7 @@ func toggle() {
 			ffmpeg.Process.Wait()
 			ffmpeg = exec.Command("ffmpeg","-fflags", "nobuffer", "-flags", "low_delay", "-strict", "experimental", "-i", fmt.Sprintf("http://%s:8000", *host),"-b:v","1000k", "-vf", "format=yuv420p", "-f", "v4l2", CAM_FILE)
 			}else{
-				ffmpeg = command.Run("ffmpeg", "-f", "avfoundation", "-framerate", "30","-video_size","1280x720","-i", "0", "-b:v","1000k", "-vcodec", "mpeg1video", "-f", "mpegts", "-")
+				ffmpeg = exec.Command("ffmpeg", "-f", "avfoundation", "-framerate", "30","-video_size","1280x720","-i", "0", "-b:v","1000k", "-vcodec", "mpeg1video", "-f", "mpegts", "-")
 				stdout , _ = ffmpeg.StdoutPipe()
 			}
 			ffmpeg.Stderr = os.Stderr
@@ -145,7 +145,7 @@ func toggle() {
 	}
 }
 func main() {
-	command.Register()
+	//command.Register()
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
 	host=flag.String("host","127.0.0.1","IP where the server will be running on/where the client will be pulling from")
