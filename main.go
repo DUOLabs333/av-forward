@@ -90,8 +90,9 @@ func toggle() {
 		numConn = len(pids[CAM_FILE])
 		}else{
 		numConn=0
-		conns_bytes,_ := exec.Command("lsof", "-i", fmt.Sprintf("tcp@%s:8000",*host), "-sTCP:ESTABLISHED", "-t").Output()
+		conns_bytes,_ := command.Run("lsof", "-i", fmt.Sprintf("tcp@%s:8000",*host), "-sTCP:ESTABLISHED", "-t").Output()
 		conns := string(conns_bytes)
+
 		for _,conn := range strings.Split(conns, "\n"){
 			if len(conn)>0{ //Non-empty string
 				numConn+=1

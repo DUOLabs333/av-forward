@@ -51,8 +51,7 @@ type MultiWriter struct {
 // dynamically after creation.
 //
 // Each write is written to each listed writer, one at a time. If a listed
-// writer returns an error, that overall write operation stops and returns the
-// error; it does not continue down the list.
+// writer returns an error, remove from the list and continue
 func New(writers ...io.Writer) *MultiWriter {
 	mw := &MultiWriter{writers: writers}
 	return mw
@@ -60,6 +59,7 @@ func New(writers ...io.Writer) *MultiWriter {
 
 // Write writes some bytes to all the writers.
 func (mw *MultiWriter) Write(p []byte) (n int, err error) {
+	//fmt.Printf("Num of writers: %d\n",len(mw.writers))
 	mw.RLock()
 	defer mw.RUnlock()
 
@@ -88,7 +88,7 @@ func (mw *MultiWriter) Add(w io.Writer) {
 
 // Remove will remove a previously added writer from the list of writers.
 func (mw *MultiWriter) Remove(w io.Writer) {
-	mw.Lock()
+	mw.RLock()
 	var writers []io.Writer
 	for _, ew := range mw.writers {
 		if ew != w {
@@ -96,7 +96,7 @@ func (mw *MultiWriter) Remove(w io.Writer) {
 		}
 	}
 	mw.writers = writers
-	mw.Unlock()
+	mw.RUnlock()
 }
 
 func (mw *MultiWriter) Close() error{

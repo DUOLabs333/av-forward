@@ -1317,8 +1317,8 @@ static int64_t getmaxrss(void)
 #endif
 }
 
-int main_test(int argc, char **argv);
-int main_test(int argc, char **argv)
+int ffmpeg_main(int argc, char **argv);
+int ffmpeg_main(int argc, char **argv)
 {
     int ret, err_rate_exceeded;
     BenchmarkTimeStamps ti;
