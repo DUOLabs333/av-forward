@@ -12,15 +12,17 @@ import (
 	"strconv"
 	"syscall"
 	"runtime"
-	"strings"
 	"io"
 )
 
 var ffmpeg *exec.Cmd
 var stdin io.WriteCloser
+
 var host *string
+
 var client bool
-//Set host based on operating system
+var hostServer *server.Server
+
 const CAM_NUM int = 0
 
 var CAM_FILE string = fmt.Sprintf("/dev/video%d", CAM_NUM)
@@ -80,35 +82,28 @@ func waitUntilFileIsOpen(pid int) {
 }
 func toggle() {
 	var on bool = true
-	var numConn int
+	var numConns int
 	var started bool = true
 	var ffmpeg_proc_exists bool
 	var stdout io.ReadCloser
 	for true {
 		if client{
 		pids, _ := lsof.Scan(CheckForVideoFile)
-		numConn = len(pids[CAM_FILE])
+		numConns = len(pids[CAM_FILE])
 		}else{
-		numConn=0
-		conns_bytes,_ := exec.Command("lsof", "-i", fmt.Sprintf("tcp@%s:8000",*host), "-sTCP:ESTABLISHED", "-t").Output()
-		conns := string(conns_bytes)
-
-		for _,conn := range strings.Split(conns, "\n"){
-			if len(conn)>0{ //Non-empty string
-				numConn+=1
-			}
-		}
-		if !started{ //Count the ffmpeg server as a connection to be compatible with the client code
-			numConn+=1
-		}
-		}
-		//fmt.Println(numConn)
+		numConns=len(hostServer.Conns)
 		
-		if !started && ((!client && on) || (client)) {
+		if !started{ //Count the ffmpeg server as a connection to be compatible with the client code
+			numConns+=1
+		}
+		}
+		
+		
+		if !started && ((!client && on) || (client)) { //FFmpeg is running only if either the host has the camera on, or the client has started running (for the client, a ffmpeg process is running, whether on or off)
 			ffmpeg_proc_exists, _ = PidExists(ffmpeg.Process.Pid)
 		}
 
-		if on && (numConn <= 1 || !ffmpeg_proc_exists) { //Turning off --- only if the ffmpeg process is connected in the first place or can't connect to the host's camera
+		if on && (numConns <= 1 || !ffmpeg_proc_exists) { //Turning off --- only if the ffmpeg process is connected in the first place or can't connect to the host's camera
 			if !started { //When we first start, ffmpeg isn't running, so there's nothing to kill
 				ffmpeg.Process.Kill()
 				ffmpeg.Process.Wait()
@@ -124,7 +119,7 @@ func toggle() {
 			}
 			on = false
 
-		} else if !on && numConn > 1 { //Turning on
+		} else if !on && numConns > 1 { //Turning on
 			if client{
 			ffmpeg.Process.Kill()
 			ffmpeg.Process.Wait()
@@ -164,9 +159,9 @@ func main() {
 		//netcat := exec.Command("nc", "-lk", *host, "8000")
 		//stdin , _ = netcat.StdinPipe()
 		//netcat.Start()
-		server:=new(server.Server)
-		server.Start(*host,8000)
-		stdin=server.Writer
+		hostServer=new(server.Server)
+		hostServer.Start(*host,8000)
+		stdin=hostServer
 	}
 		
 	go toggle()
