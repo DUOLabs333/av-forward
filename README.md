@@ -5,12 +5,12 @@ How to compile:
 
 How to use:
 	In the host:
-		You need ffmpeg and lsof (which should already be provided).
-		Run `./av-forward -host $HOST`, where $HOST is the IP address where you want to run the forwarding server from
+		You need ffmpeg.
+		Run `./av-forward -host $HOST`, where $HOST is the IP address where you want to run the forwarding server from.
 
 	In the guest:
-		You need v4l2-ctl, v4l2loopback, and ps (which should already be provided).
-		Run `./av-forward -host $HOST`, where $HOST is the IP address you chose before.
+		You need ffmpeg, v4l2-ctl, and v4l2loopback.
+		Run `sudo ./av-forward -host $HOST`, where $HOST is the IP address you chose before.
 
 	That's it! The webcam will automatically turn off and on, depending on whether the guest is actively using it.
 

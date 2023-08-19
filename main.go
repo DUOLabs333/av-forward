@@ -42,12 +42,6 @@ func PidExists(pid int) (bool, error) {
 	}
 	err = proc.Signal(syscall.Signal(0))
 	if err == nil {
-		status,_:= exec.Command("ps","-ostat=",strconv.Itoa(pid)).Output()
-		if string(status)=="Z"{ //Zombie process
-			fmt.Println(err)
-			proc.Wait()
-			return false, nil
-		}
 		return true, nil
 	}
 	if err.Error() == "os: process already finished" {
@@ -106,7 +100,6 @@ func toggle() {
 		if on && (numConns <= 1 || !ffmpeg_proc_exists) { //Turning off --- only if the ffmpeg process is connected in the first place or can't connect to the host's camera
 			if !started { //When we first start, ffmpeg isn't running, so there's nothing to kill
 				ffmpeg.Process.Kill()
-				ffmpeg.Process.Wait()
 			} else {
 				started = false
 			}
@@ -115,6 +108,7 @@ func toggle() {
 			ffmpeg = exec.Command("ffmpeg", "-f", "lavfi", "-i", "color=size=1280x720:rate=25:color=black","-f", "v4l2", CAM_FILE) //Black screen is used as a "turned off"
 			//ffmpeg.Stderr=os.Stderr
 			ffmpeg.Start()
+			go ffmpeg.Process.Wait()
 			waitUntilFileIsOpen(ffmpeg.Process.Pid) //This prevents a bug where we rapidly switch between turning off and on
 			}
 			on = false
@@ -122,7 +116,6 @@ func toggle() {
 		} else if !on && numConns > 1 { //Turning on
 			if client{
 			ffmpeg.Process.Kill()
-			ffmpeg.Process.Wait()
 			ffmpeg = exec.Command("ffmpeg","-fflags", "nobuffer", "-flags", "low_delay", "-strict", "experimental", "-i", fmt.Sprintf("http://%s:8000", *host),"-b:v","1000k", "-vf", "format=yuv420p", "-f", "v4l2", CAM_FILE)
 			}else{
 				ffmpeg = exec.Command("ffmpeg", "-f", "avfoundation", "-framerate", "30","-video_size","1280x720","-i", "0", "-b:v","1000k", "-vcodec", "mpeg1video", "-f", "mpegts", "-")
@@ -130,6 +123,7 @@ func toggle() {
 			}
 			ffmpeg.Stderr = os.Stderr
 			ffmpeg.Start()
+			go ffmpeg.Process.Wait()
 			if !client{
 				go io.Copy(stdin,stdout)
 			}else{
