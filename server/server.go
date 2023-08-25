@@ -46,14 +46,19 @@ func handleIncomingRequest(server *Server,conn net.Conn) {
 func removeClosedConns(server *Server){
 	for {
 		server.closedLock.RLock()
-		if len(server.closed)==0{
-			server.closedLock.RUnlock()
-			continue
-		}
+
+		closedLength:=len(server.closed)
 		server.closedLock.RUnlock()
 
+		if closedLength==0{
+			continue
+		}
+
+
 		server.closedLock.Lock()
+
 		server.connLock.Lock()
+
 		for i := len(server.Conns) - 1; i >= 0; i-- { //We start backwards so that each removal doesn't invalidate the indices in server.Conns before i
 			for conn, _ := range server.closed {
 				if server.Conns[i] == conn {
@@ -69,6 +74,8 @@ func removeClosedConns(server *Server){
 
 	}
 }
+
+
 func (server *Server) Add(conn net.Conn){
 	server.connLock.Lock()
 	defer server.connLock.Unlock()
@@ -79,6 +86,7 @@ func (server *Server) Add(conn net.Conn){
 
 
 func ReadWriteConns(server *Server, method string, buf []byte) (n int, err error){
+	time.Sleep(time.Millisecond) //Print lock starvation (allow other locks to be released)
 	server.connLock.RLock()
 	
 	defer server.connLock.RUnlock()
@@ -100,6 +108,7 @@ func ReadWriteConns(server *Server, method string, buf []byte) (n int, err error
 			netErr, ok := err.(net.Error)
 			if !(ok && netErr.Timeout()){ //If not a timeout, then assume I/O error and the connection is closed
 				server.Remove(conn)
+				//go server.Remove(conn)
 				continue
 			}
 		}
