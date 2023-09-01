@@ -8,16 +8,17 @@ import (
 
 type Server struct{
 	Listener net.Listener
-	Conns []net.Conn
+	Conns map[net.Conn]bool
 	connLock sync.RWMutex
-	closed map[net.Conn]bool
-	closedLock sync.RWMutex
+	closedConns chan net.Conn
 }
+
 func (server *Server) Start(host string, port int){
 	var err error
 	server.Listener, err=net.Listen("tcp",fmt.Sprintf("%s:%d",host,port))
 
-	server.closed=make(map[net.Conn]bool)
+	server.closedConns=make(chan net.Conn)
+	server.Conns=make(map[net.Conn]bool)
 
 	if (err!=nil){
 		panic(err)
@@ -45,31 +46,13 @@ func handleIncomingRequest(server *Server,conn net.Conn) {
 
 func removeClosedConns(server *Server){
 	for {
-		server.closedLock.RLock()
-
-		closedLength:=len(server.closed)
-		server.closedLock.RUnlock()
-
-		if closedLength==0{
-			continue
-		}
-
-
-		server.closedLock.Lock()
+		
+		conn := <- server.closedConns
 
 		server.connLock.Lock()
 
-		for i := len(server.Conns) - 1; i >= 0; i-- { //We start backwards so that each removal doesn't invalidate the indices in server.Conns before i
-			for conn, _ := range server.closed {
-				if server.Conns[i] == conn {
-					server.Conns = append(server.Conns[:i], server.Conns[i+1:]...)
-					delete(server.closed,conn)
-					conn.Close()
-					break
-				}
-			}
-		}
-		server.closedLock.Unlock()
+		delete(server.Conns,conn)
+
 		server.connLock.Unlock()
 
 	}
@@ -80,10 +63,16 @@ func (server *Server) Add(conn net.Conn){
 	server.connLock.Lock()
 	defer server.connLock.Unlock()
 
-	server.Conns=append(server.Conns,conn)
+	server.Conns[conn]=true
 }
 
 
+func (server *Server) NumConns() int{
+	server.connLock.RLock()
+	defer server.connLock.RUnlock()
+
+	return len(server.Conns)
+}
 
 func ReadWriteConns(server *Server, method string, buf []byte) (n int, err error){
 	time.Sleep(time.Millisecond) //Print lock starvation (allow other locks to be released)
@@ -94,7 +83,7 @@ func ReadWriteConns(server *Server, method string, buf []byte) (n int, err error
 	n=0
 	var numBytes int
 	
-	for _, conn :=range server.Conns{
+	for conn, _ :=range server.Conns{
 		if method=="Read"{
 			conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 			numBytes,err = conn.Read(buf)
@@ -108,7 +97,6 @@ func ReadWriteConns(server *Server, method string, buf []byte) (n int, err error
 			netErr, ok := err.(net.Error)
 			if !(ok && netErr.Timeout()){ //If not a timeout, then assume I/O error and the connection is closed
 				server.Remove(conn)
-				//go server.Remove(conn)
 				continue
 			}
 		}
@@ -137,14 +125,7 @@ func (server *Server) Write(buf []byte) (n int, err error){
 
 func (server *Server) Remove(conns ...net.Conn){
 	for _, conn := range conns{
-		server.closedLock.RLock()
-		_,ok := server.closed[conn]
-		server.closedLock.RUnlock()
-		if !ok{
-			server.closedLock.Lock()
-			server.closed[conn]=true
-			server.closedLock.Unlock()
-		}
+		server.closedConns <-conn
 	}
 }
 
