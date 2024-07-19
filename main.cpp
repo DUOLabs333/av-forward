@@ -29,15 +29,13 @@ typedef struct Device {
 	std::string name;
 	std::array<int,2> size;
 	struct glaze {
-		static constexpr auto value = glz::object(&Device::type, &Device::name, &Device::size);
+		static constexpr auto value = glz::object(&Device::type, &Device::name);
 	};
 
-	std::string buf;
-
-	bp::child process; //Don't know what type Boost.Process uses
+	bp::child process;
 	bool started = false;
 
-	std::string cmd(){
+	auto cmd(){
 		 if (type==AUDIO){
 			#ifdef CLIENT
 			#else
@@ -51,7 +49,7 @@ typedef struct Device {
 
 	void start(){
 		if (!started){
-			process={cmd()};
+			process=cmd();
 			started=true;
 		}
 	}
@@ -69,30 +67,37 @@ typedef struct Device {
 	std::condition_variable cv;
 
 	#ifndef CLIENT
-		std::set<AsioConn*> conns;
+		std::string buf; //For holding the stdout
 
-		int number; //Relative to the video/audio list
+		bp::ipstream is; //For piping the stdout of ffmpeg to a socket
 
-		std::vector<AsioConn*> closed_conns;
+		std::set<AsioConn*> conns; //Clients that are listening to the server
+
+		int number; //Relative to the video/audio list returned by ffmpeg
+
+		std::vector<AsioConn*> closed_conns; //Temp list to hold connections to be deleted
 	#else
-		std::atomic<int> num_procs = 0;
+		std::atomic<int> num_procs = 0; //Number of programs that actively have the file open
+		
+		bp::opstream os; //For piping from a socket to the stdin of ffmpeg
+
 	#endif
 	
 
 
 };
 
-std::unordered_map<int, Device> available_devices;
+std::unordered_map<int, Device> available_devices; //All devices available to proxy
 
+auto ffmpeg = bp::search_path("ffmpeg");
 
-
-void addConn(int id, AsioConn* conn){ //For server
+void addConn(int id, AsioConn* conn){ //For the server
 	auto& device=available_devices[id];
 
 	device.mu.lock();
 
 	device.conns.insert(conn);
-	if ((device.conns.size()>=1)){
+	if ((device.conns.size()>0)){ //Since there's now someone listening, start the camera to pipe the video to
 		device.start();
 	}
 
@@ -101,13 +106,13 @@ void addConn(int id, AsioConn* conn){ //For server
 	device.cv.notify_one();
 }
 
-void removeConn(int id, AsioConn* conn){
+void removeConn(int id, AsioConn* conn){ //For the server
 	auto& device=available_devices[id];
 
 	device.mu.lock();
 
 	device.conns.erase(conn);
-	asio_remove(conn);
+	asio_close(conn);
 
 	if ((device.conns.size()==0)){
 		device.stop();
@@ -117,9 +122,9 @@ void removeConn(int id, AsioConn* conn){
 	
 	device.cv.notify_one();
 }
-void handleConn(AsioConn* conn){ //For servers
+void handleConn(AsioConn* conn){ //For the server
 	char* info;
-	int dummy;
+	int dummy; //Even though we know that sizeof(info)==2, asio_read still requires a length parameter
 	bool err;
 
 	asio_read(conn, &info, &dummy, &err);
@@ -129,35 +134,33 @@ void handleConn(AsioConn* conn){ //For servers
 		return;
 	}
 
-	if ((uint8_t)info[0]==0){ //Wants to know what devices are available
+	if ((uint8_t)info[0]==0){ //The client wants to know what devices are available
 		auto str=glz::write_json(available_devices);
 		asio_write(conn, str.data(), str.size(), &err);
-		asio_close(conn);
+		asio_close(conn); //No need for it any more
 		return;
 	}
 
 	addConn((uint8_t)info[1], conn);
 
 }
-//addConn --- gets to 1, start process
-//removeConn --- goes to 0, stop process
-//When devices are initialized, set string to width*height
-//ffmpeg -hide_banner
 
 #ifndef CLIENT
-	void handleDevice(int id){ //Server writing to multiple connections at a time
+	void handleDevice(int id){ //A thread on the server is writing to multiple connections at a time
 		auto& device=available_devices[id];
-		
+
+		device.buf.resize(device.size[0]*device.size[1]);
+
 		for(;;){
 			std::unique_lock lk(device.mu);
 			device.cv.wait(lk, [&]{return !device.conns.empty();});
 			
-			device.process.stdout.read(device.buf.data(), device.buf.size()); //I don't know the actual API for Boost::Process
+			device.is.readsome(device.buf.data(), device.buf.size());
 
 
 			bool err;
 			for(auto& conn : device.conns){
-				asio_write(conn, device.buf.data(), device.buf.size(), &err);
+				asio_write(conn, device.buf.data(), device.is.gcount(), &err);
 				if(err){
 					device.closed_conns.push_back(conn);
 				}
@@ -211,7 +214,7 @@ void handleConn(AsioConn* conn){ //For servers
 					break;
 				}
 
-				device.process.stdin.write(buf, len);
+				device.os.write(buf, len);
 
 			}
 
@@ -272,33 +275,78 @@ int main(){
 		connectToServer();
 	#else
 		bp::ipstream is;
-		bp::child c (bp::search_path("ffmpeg"),"-f", "avfoundation", "-list_devices", "true", "-i", "\"\"", bp::std_out > bp::null, bp::std_err > is, bp::std_in < bp::null);
+		bp::child c (ffmpeg,"-f", "avfoundation", "-list_devices", "true", "-i", "\"\"", bp::std_out > bp::null, bp::std_err > is, bp::std_in < bp::null);
 		
 		int mode=-1;
 		
 		int id=0;
-		for (std::string line; std::getline(is, line);){
+		for (std::string line; !is.eof() && std::getline(is, line);){
 			std::string regex_header=R"(\[.+\]\s+)";
 			std::regex device_regex(regex_header+R"#(\[(\d+\)]\s+(.+))#");
 			if (mode==-1){
 				if (std::regex_match(line, std::regex(regex_header+"(AVFoundation video devices))#"))){
-				mode=0;
-		}else if (std::regex_match(line, std::regex(regex_header+"(AVFoundation audio devices))#"))){
-		mode=1;
-	}
-		continue;
-		}else {
-			std::smatch match;
-			auto matched=std::regex_match(line, device_regex);
-			if (!matched){
+					mode=static_cast<int>(decltype(Device::type)::VIDEO);
+				} else if (std::regex_match(line, std::regex(regex_header+"(AVFoundation audio devices))#"))){
+					mode=static_cast<int>(decltype(Device::type)::AUDIO);
+				}
 				continue;
+			
+			} else {
+				std::smatch match;
+				auto matched=std::regex_match(line, device_regex);
+				if (!matched){
+					continue;
+				}
+
+				if(mode==1){
+					continue; //Just for now, until I figure out how to get audio working (use nc as a makeshift server)
+				}
+				auto& device=available_devices[id];
+				device.number=stoi(match.str(1));
+				device.name=match.str(2);
+
+				if(device.name.substr("Capture screen")){ //Should not capture screens
+					available_devices.erase(id);
+					continue;
+				}
+
+				device.type=static_cast<decltype(Device::type)>(mode);
+				
+				bp::child c(ffmpeg, "-f", "avfoundation", "-video_size", "1x1", "-i", std::format("{}:", device.number));
+				for (std::string line; !is.eof() && std::getline(is, line);){
+					std::smatch match;
+					std::regex_match(line, match, std::regex(regex_header+R"#((\d+)x(\d+)@)#"));
+					if(!match){
+						continue;
+					}
+
+					device.size[0]=stoi(match.str(1));
+					device.size[1]=stoi(match.str(2));
+				}
+
+				c.wait();
+				
+				
+				id++;
+
 			}
-			auto& device=available_devices[id++];
-			device.number=stoi(match.str(1));
-			device.name=match.str(2);
 
 		}
 
+		c.wait();
+		
+		std::vector<std::thread>
+		for(auto& [key, val]: available_devices){
+			threads.emplace(handleDevice, key);
+		}
+		
+		auto server=asio_server_init(2);
+		for (;;){
+			auto conn=asio_server_connect(server);
+			threads.emplace(handleConn, conn);
+		}
+		for(auto& t: threads){
+			t.join();
 		}
 
 	#endif
