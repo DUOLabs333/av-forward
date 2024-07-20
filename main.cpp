@@ -1,8 +1,6 @@
 #include <asio_c.h>
-#include <boost/process.h>
-#include <boost/process/io.hpp>
+#include <boost/process.hpp>
 #include <condition_variable>
-#include <glaze/json/read.hpp>
 #include <regex>
 #include <string_view>
 #include <unordered_map>
@@ -13,7 +11,6 @@
 #include <mutex>
 #include <thread>
 #include <atomic>
-#include <boost/process.hpp>
 #include <regex>
 
 namespace bp = boost::process;
@@ -23,6 +20,7 @@ namespace bp = boost::process;
 //https://unix.stackexchange.com/questions/651617/write-audio-stream-to-an-alsa-device-with-ffmpeg
 //https://superuser.com/questions/1572633/record-application-audio-only-with-ffmpeg-on-macos
 
+auto ffmpeg = bp::search_path("ffmpeg");
 typedef struct Device {
 	
 	enum {VIDEO=0, AUDIO=1} type;
@@ -35,35 +33,65 @@ typedef struct Device {
 	bp::child process;
 	bool started = false;
 
-	auto cmd(){
+	auto args(){ //Stream video/audio I/O using ffmpeg 
 		 if (type==AUDIO){
 			#ifdef CLIENT
 			#else
 			#endif
 		 }else if (type==VIDEO){
 			#ifdef CLIENT
+				return bp::args({"-f", "mpegts", "-fflags", "nobuffer", "-flags", "low_delay", "-i", "-", "-f", "v4l2", device_file});
 			#else
+				return bp::args({"-f", "avfoundation", "-framerate", std::to_string(framerate), "-video_size", std::format("{}x{}", size[0], size[1]), "-i", std::format("{}:", index), "-vcodec", "mpeg4", "-f", "mpegts", "-"});
 			#endif
 		}
 	}
 
 	void start(){
+		mu.lock();
 		if (!started){
-			process=cmd();
+			#ifdef CLIENT
+				process=bp::child(ffmpeg, args(), bp::std_in < os);
+			#else
+				process=bp::child(ffmpeg, args(), bp::std_out > is);
+			#endif
 			started=true;
 		}
+
+		mu.unlock();
+
 	}
 
 	void stop(){
+		mu.lock();
 		if(started){
 			process.terminate();
 			process.wait();
+			is.clear();
 			started=false;
 			
 		}
+
+		mu.unlock();
+	}
+	
+	auto restart(std::iostream& stream){
+		mu.lock();
+		bool restarted=false;
+		if(stream.bad()){
+			stop();
+			start();
+			stream.clear();
+			restarted=true;
+		}
+
+		mu.unlock();
+
+		return restarted;
 	}
 
-	std::mutex mu;
+
+	std::recursive_mutex mu;
 	std::condition_variable cv;
 
 	#ifndef CLIENT
@@ -73,13 +101,17 @@ typedef struct Device {
 
 		std::set<AsioConn*> conns; //Clients that are listening to the server
 
-		int number; //Relative to the video/audio list returned by ffmpeg
+		int index; //Relative to the video/audio list returned by ffmpeg
 
 		std::vector<AsioConn*> closed_conns; //Temp list to hold connections to be deleted
+
+		int framerate = 0;
 	#else
 		std::atomic<int> num_procs = 0; //Number of programs that actively have the file open
 		
 		bp::opstream os; //For piping from a socket to the stdin of ffmpeg
+
+		std::string device_file;
 
 	#endif
 	
@@ -87,9 +119,7 @@ typedef struct Device {
 
 };
 
-std::unordered_map<int, Device> available_devices; //All devices available to proxy
-
-auto ffmpeg = bp::search_path("ffmpeg");
+std::unordered_map<int, Device> available_devices; //All devices available to backend
 
 void addConn(int id, AsioConn* conn){ //For the server
 	auto& device=available_devices[id];
@@ -156,7 +186,11 @@ void handleConn(AsioConn* conn){ //For the server
 			device.cv.wait(lk, [&]{return !device.conns.empty();});
 			
 			device.is.readsome(device.buf.data(), device.buf.size());
-
+			
+			
+			if(device.restart()){ //Runs through the loop again if the process has died
+				continue;
+			}
 
 			bool err;
 			for(auto& conn : device.conns){
@@ -187,9 +221,13 @@ void handleConn(AsioConn* conn){ //For the server
 		char* buf;
 		int len;
 		
-		//Call lsof/fuser every 10 s
+		device.device_file=std::format("/dev/video{}", id);
+		if (device.type==VIDEO){ //Creating virtual device
+			bp::system(bp::search_path("sudo"), "modprobe", "v4l2loopback", std::format("video_nr={}", id), std::format("card_label={}", device.name), "exclusive_caps=1");
+		}
+		//Call lsof/fuser every 10 s, and update the count
 		std::thread watch(countOpenHandles, std::ref(device));
-		while(true){
+		while(true){ //Runs when client wants to reconnect to server
 			asio_close(client);
 			device.stop();
 			
@@ -209,12 +247,14 @@ void handleConn(AsioConn* conn){ //For the server
 				if (device.num_procs==0){
 					break;
 				}
-				asio_write(client, &buf, &len, &err);
+				asio_read(client, &buf, &len, &err);
 				if (err){
 					break;
 				}
 
 				device.os.write(buf, len);
+
+				device.restart(); //Restarts ffmpeg process if its stdin is closed
 
 			}
 
@@ -232,6 +272,9 @@ void connectToServer(){
 	std::vector<std::thread> threads;
 	
 	uint8_t info[2];
+
+	bp::system("modprobe -r v4l2loopback");
+	bp
 	while (true){
 		asio_close(client);
 		client=asio_connect(2);
@@ -273,14 +316,14 @@ int main(){
 
 	#ifdef CLIENT
 		connectToServer();
-	#else
+	#else  //Getting all available devices
 		bp::ipstream is;
 		bp::child c (ffmpeg,"-f", "avfoundation", "-list_devices", "true", "-i", "\"\"", bp::std_out > bp::null, bp::std_err > is, bp::std_in < bp::null);
 		
 		int mode=-1;
 		
 		int id=0;
-		for (std::string line; !is.eof() && std::getline(is, line);){
+		for (std::string line; !is.bad() && std::getline(is, line);){
 			std::string regex_header=R"(\[.+\]\s+)";
 			std::regex device_regex(regex_header+R"#(\[(\d+\)]\s+(.+))#");
 			if (mode==-1){
@@ -302,20 +345,21 @@ int main(){
 					continue; //Just for now, until I figure out how to get audio working (use nc as a makeshift server)
 				}
 				auto& device=available_devices[id];
-				device.number=stoi(match.str(1));
+				device.index=stoi(match.str(1));
 				device.name=match.str(2);
+				device.framerate=int(stof(match.str(3));
 
-				if(device.name.substr("Capture screen")){ //Should not capture screens
+				if(device.name.find("Capture screen") != std::string::npos ){ //Should not capture screens
 					available_devices.erase(id);
 					continue;
 				}
 
 				device.type=static_cast<decltype(Device::type)>(mode);
 				
-				bp::child c(ffmpeg, "-f", "avfoundation", "-video_size", "1x1", "-i", std::format("{}:", device.number));
+				bp::child c(ffmpeg, "-f", "avfoundation", "-video_size", "1x1", "-i", std::format("{}:", device.index)); //This causes an error, which causes ffmpeg to print out the proper resolutions
 				for (std::string line; !is.eof() && std::getline(is, line);){
 					std::smatch match;
-					std::regex_match(line, match, std::regex(regex_header+R"#((\d+)x(\d+)@)#"));
+					std::regex_match(line, match, std::regex(regex_header+R"#((\d+)x(\d+)@\[\d+\.\d+\s+(\d+\.\d+).+)#"));
 					if(!match){
 						continue;
 					}
