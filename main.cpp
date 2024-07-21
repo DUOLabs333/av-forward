@@ -255,10 +255,20 @@ std::unordered_map<int, Device> available_devices; //All devices available to ba
 		char* buf;
 		int len;
 		
-		device.file=std::format("/dev/video{}", id);
-		if (device.type==VIDEO){ //Creating virtual device
-			bp::system(bp::search_path("sudo"), "modprobe", "v4l2loopback", std::format("video_nr={}", id), std::format("card_label={}", device.name), "exclusive_caps=1");
+		while(true){ //Creating virtual device
+			bp::ipstream is;
+			if (device.type==VIDEO){
+				bp::child c(bp::search_path("sudo"), "v4l2loopback-ctl", "--name", device.name, "--exclusive-caps", "1", bp::std_out > is);
+
+				std::getline(is, device.file);
+				c.wait();
+				if(!is.fail()){
+					break;
+				}
+			}else if (device.type == AUDIO){
+			}
 		}
+
 		//Call lsof/fuser every 10 s, and update the count
 		std::thread watch(countOpenHandles, std::ref(device));
 		while(true){ //Runs when client wants to reconnect to server
@@ -313,7 +323,7 @@ void connectToServer(){
 		asio_close(client);
 		client=asio_connect(2);
 
-		info[0]=0; //Want to get infotmation about the available devices
+		info[0]=0; //Want to get information about the available devices
 
 		asio_write(client, (char*)info, sizeof(info), &err);
 
@@ -357,7 +367,7 @@ int main(){
 		int mode=-1;
 		
 		int id=0;
-		for (std::string line; !is.bad() && std::getline(is, line);){
+		for (std::string line; !is.eof() && std::getline(is, line);){
 			std::string regex_header=R"(\[.+\]\s+)";
 			std::regex device_regex(regex_header+R"#(\[(\d+\)]\s+(.+))#");
 			if (mode==-1){
