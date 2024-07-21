@@ -40,7 +40,7 @@ typedef struct Device {
 			#endif
 		 }else if (type==VIDEO){
 			#ifdef CLIENT
-				return bp::args({"-f", "mpegts", "-fflags", "nobuffer", "-flags", "low_delay", "-i", "-", "-f", "v4l2", device_file});
+				return bp::args({"-f", "mpegts", "-fflags", "nobuffer", "-flags", "low_delay", "-i", "-", "-f", "v4l2", file});
 			#else
 				return bp::args({"-f", "avfoundation", "-framerate", std::to_string(framerate), "-video_size", std::format("{}x{}", size[0], size[1]), "-i", std::format("{}:", index), "-vcodec", "mpeg4", "-f", "mpegts", "-"});
 			#endif
@@ -78,7 +78,7 @@ typedef struct Device {
 	auto restart(std::iostream& stream){
 		mu.lock();
 		bool restarted=false;
-		if(stream.bad()){
+		if(!stream.good()){
 			stop();
 			start();
 			stream.clear();
@@ -111,7 +111,7 @@ typedef struct Device {
 		
 		bp::opstream os; //For piping from a socket to the stdin of ffmpeg
 
-		std::string device_file;
+		std::string file;
 
 	#endif
 	
@@ -211,6 +211,24 @@ void handleConn(AsioConn* conn){ //For the server
 		}
 }
 #else
+	void countOpenHandles(Device& device){ //Polling is a dirty hack, but I'm not sure there's a better way
+		for(;;){
+			bp::ipstream is;
+			int procs=0;
+			bp::child c(bp::search_path("lsof"), "-t", device.file, bp::std_out > is);
+
+			for(std::string line; is.good() && std::getline(is, line) && !line.empty();){
+				procs++;
+			}
+
+			c.wait();
+
+			device.num_procs=procs;
+
+			std::thread::sleep_for(std::chrono::seconds(5));
+		}
+	}
+
 	void handleDevice(int id){
 		//Make device as well
 		auto& device=available_devices[id];
@@ -221,7 +239,7 @@ void handleConn(AsioConn* conn){ //For the server
 		char* buf;
 		int len;
 		
-		device.device_file=std::format("/dev/video{}", id);
+		device.file=std::format("/dev/video{}", id);
 		if (device.type==VIDEO){ //Creating virtual device
 			bp::system(bp::search_path("sudo"), "modprobe", "v4l2loopback", std::format("video_nr={}", id), std::format("card_label={}", device.name), "exclusive_caps=1");
 		}
