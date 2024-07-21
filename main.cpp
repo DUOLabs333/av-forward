@@ -307,7 +307,7 @@ void connectToServer(){
 	
 	uint8_t info[2];
 
-	bp::system("modprobe -r v4l2loopback");
+	bp::system("sudo modprobe v4l2loopback");
 
 	while (true){
 		asio_close(client);

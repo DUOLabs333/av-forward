@@ -1,2 +1,5 @@
 av-forward
 *.a
+*.o
+b2
+external/
