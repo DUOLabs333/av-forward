@@ -372,13 +372,13 @@ int main(){
 			std::regex device_regex(regex_header+R"#(\[(\d+)\]\s+(.+))#");
 			std::regex size_regex(regex_header+R"#((\d+)x(\d+)@\[\d+\.\d+\s+(\d+\.\d+).+)#");
 
-			constexpr auto device_header_format = "AVFoundation {} devices";
+			constexpr auto device_header_format = "AVFoundation {} devices:";
 
 
-			if (line.find(std::format(device_header_format,"video")) != std::string::npos){
+			if (std::regex_match(line, regex_header+std::format(device_header_format,"video"))){
 					mode=0;
 					continue;
-			} else if (line.find(std::format(device_header_format,"audio")) != std::string::npos){
+			} else if (std::regex_match(line, regex_header+std::format(device_header_format,"audio"))){
 					mode=1;
 					continue;
 			}
