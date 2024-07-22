@@ -1,6 +1,7 @@
 #include <asio_c.h>
 #include <boost/process.hpp>
 #include <condition_variable>
+#include <csignal>
 #include <regex>
 #include <string_view>
 #include <unordered_map>
@@ -52,7 +53,16 @@ typedef struct Device {
 			#endif
 		}
 	}
+	
+	void delete_file(){ //This really should be something that runs at startup
+		#ifdef CLIENT
+			if (type==VIDEO){
+				bp::system(bp::search_path("sudo"), "v4l2loopback-ctl", "delete", file);
+			}
+		#endif
 
+	}
+	
 	void start(){
 		mu.lock();
 		if (!started){
@@ -258,7 +268,7 @@ std::unordered_map<int, Device> available_devices; //All devices available to ba
 		while(true){ //Creating virtual device
 			bp::ipstream is;
 			if (device.type==VIDEO){
-				bp::child c(bp::search_path("sudo"), "v4l2loopback-ctl", "--name", device.name, "--exclusive-caps", "1", bp::std_out > is);
+				bp::child c(bp::search_path("sudo"), "v4l2loopback-ctl", "add", "--name", device.name, "--exclusive-caps", "1", bp::std_out > is);
 
 				std::getline(is, device.file);
 				c.wait();
@@ -354,9 +364,25 @@ void connectToServer(){
 	}
 
 }
-	
 
+extern "C"{
+	void deleteAllFiles(int sig){
+		for(auto& [key, val]: available_devices){
+			val.delete_file();
+			
+		}
+
+		if(sig!=0){
+			signal(sig, SIG_DFL);
+			raise(sig);
+		}
+	}
+}
 int main(){
+
+	signal(SIGTERM, deleteAllFiles);
+	signal(SIGINT, deleteAllFiles);
+	atexit([](){deleteAllFiles(0);});
 
 	#ifdef CLIENT
 		connectToServer();
