@@ -262,7 +262,7 @@ std::unordered_map<int, Device> available_devices; //All devices available to ba
 			c.wait();
 			
 			device.procs_mode=mode;
-			printf("%i\n", device.procs_mode.load());
+			//printf("%i\n", device.procs_mode.load()); //Debug statement
 			device.cv.notify_one();
 
 			std::this_thread::sleep_for(std::chrono::seconds(5));
@@ -319,7 +319,7 @@ std::unordered_map<int, Device> available_devices; //All devices available to ba
 			device.stop();
 			device.start();
 			while(true){
-				if (device.procs_mode & 1 !=1){
+				if ((device.procs_mode & 1) !=1){
 					break;
 				}
 				asio_read(client, &buf, &len, &err);
