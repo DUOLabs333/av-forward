@@ -34,7 +34,7 @@ typedef struct Device {
 	std::string name;
 	std::array<int,2> size;
 	struct glaze {
-		static constexpr auto value = glz::object(&Device::type, &Device::name);
+		static constexpr auto value = glz::object(&Device::type, &Device::name, &Device::size);
 	};
 
 	bp::child process;
@@ -63,11 +63,18 @@ typedef struct Device {
 
 	}
 	
-	void start(){
+	void start(bool timeout = false){
 		mu.lock();
 		if (!started){
 			#ifdef CLIENT
-				process=bp::child(ffmpeg, args(), bp::std_in < os);
+				if (timeout){
+					process=bp::child(ffmpeg, bp::args({"-f", "lavfi", "-i", std::format("color=size={}x{}:rate={}:color=black", size[0], size[1], 25),"-f", "v4l2", file}));
+				}else{
+					process=bp::child(ffmpeg, args(), bp::std_in < os);
+				}
+
+				std::unique_lock lk(mu);
+				cv.wait(lk, [&](){return num_procs >= 0;}); //Wait for the number of things reading to it to be at least 1 (we had to take into account the -1)
 			#else
 				process=bp::child(ffmpeg, args(), bp::std_out > is);
 			#endif
@@ -99,7 +106,7 @@ typedef struct Device {
 		mu.unlock();
 	}
 	
-	auto restart(){
+	auto restart(){ //Only to be used when restarting ffmpeg due to failure
 		mu.lock();
 		bool restarted=false;
 		if(!stream().good()){
@@ -249,7 +256,7 @@ std::unordered_map<int, Device> available_devices; //All devices available to ba
 
 			c.wait();
 
-			device.num_procs=procs;
+			device.num_procs=procs-1;
 
 			std::this_thread::sleep_for(std::chrono::seconds(5));
 		}
@@ -285,8 +292,12 @@ std::unordered_map<int, Device> available_devices; //All devices available to ba
 			asio_close(client);
 			device.stop();
 			
+			device.start(true); //Start timeout process, and show black screen
+			
+			{
 			std::unique_lock lk(device.mu);
 			device.cv.wait(lk, [&] { return device.num_procs > 0;});
+			}
 
 			client=asio_connect(2);
 
@@ -296,9 +307,10 @@ std::unordered_map<int, Device> available_devices; //All devices available to ba
 				continue;
 			}
 			
+			device.stop();
 			device.start();
 			while(true){
-				if (device.num_procs==0){
+				if (device.num_procs<= 0){
 					break;
 				}
 				asio_read(client, &buf, &len, &err);
