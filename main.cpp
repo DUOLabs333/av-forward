@@ -364,60 +364,66 @@ int main(){
 		bp::ipstream is;
 		bp::child c (ffmpeg,"-f", "avfoundation", "-list_devices", "true", "-i", "\"\"", bp::std_out > bp::null, bp::std_err > is, bp::std_in < bp::null);
 		
-		int mode=-1;
+		int mode=-1; //-1 for unknown type, 0 for video devices, 1 for audio devices
 		
 		int id=0;
 		for (std::string line; !is.eof() && std::getline(is, line);){
 			std::string regex_header=R"(\[.+\]\s+)";
-			std::regex device_regex(regex_header+R"#(\[(\d+\)]\s+(.+))#");
-			if (mode==-1){
-				if (std::regex_match(line, std::regex(regex_header+"(AVFoundation video devices))#"))){
-					mode=static_cast<int>(DeviceType::VIDEO);
-				} else if (std::regex_match(line, std::regex(regex_header+"(AVFoundation audio devices))#"))){
-					mode=static_cast<int>(DeviceType::AUDIO);
-				}
-				continue;
-			
-			} else {
-				std::smatch match;
-				auto matched=std::regex_match(line, device_regex);
-				if (!matched){
+			std::regex device_regex(regex_header+R"#(\[(\d+)\]\s+(.+))#");
+			std::regex size_regex(regex_header+R"#((\d+)x(\d+)@\[\d+\.\d+\s+(\d+\.\d+).+)#");
+
+			constexpr auto device_header_format = "AVFoundation {} devices";
+
+
+			if (line.find(std::format(device_header_format,"video")) != std::string::npos){
+					mode=0;
 					continue;
-				}
-
-				if(mode==1){
-					continue; //Just for now, until I figure out how to get audio working (use nc as a makeshift server)
-				}
-				auto& device=available_devices[id];
-				device.index=stoi(match.str(1));
-				device.name=match.str(2);
-				device.framerate=int(stof(match.str(3));
-
-				if(device.name.find("Capture screen") != std::string::npos ){ //Should not capture screens
-					available_devices.erase(id);
+			} else if (line.find(std::format(device_header_format,"audio")) != std::string::npos){
+					mode=1;
 					continue;
-				}
-
-				device.type=static_cast<DeviceType>(mode);
-				
-				bp::child c(ffmpeg, "-f", "avfoundation", "-video_size", "1x1", "-i", std::format("{}:", device.index)); //This causes an error, which causes ffmpeg to print out the proper resolutions
-				for (std::string line; !is.eof() && std::getline(is, line);){
-					std::smatch match;
-					std::regex_match(line, match, std::regex(regex_header+R"#((\d+)x(\d+)@\[\d+\.\d+\s+(\d+\.\d+).+)#"));
-					if(!match){
-						continue;
-					}
-
-					device.size[0]=stoi(match.str(1));
-					device.size[1]=stoi(match.str(2));
-				}
-
-				c.wait();
-				
-				
-				id++;
-
 			}
+
+
+			std::smatch match;
+			if (!std::regex_match(line, match, device_regex)){
+				continue;
+			}
+
+			if(mode==1){
+				continue; //Just for now, until I figure out how to get audio working (use nc as a makeshift server for testing). Once I do, remove this conditional (and add support for getting bitrate info/ anything else that is needed below
+			}
+
+			auto& device=available_devices[id];
+			device.index=stoi(match.str(1));
+			device.name=match.str(2);
+
+			if(device.name.find("Capture screen") != std::string::npos ){ //Should not capture screens
+				available_devices.erase(id);
+				continue;
+			}
+
+			device.type=static_cast<DeviceType>(mode);
+			
+
+			bp::ipstream is;
+			bp::child c(ffmpeg, "-f", "avfoundation", "-video_size", "1x1", "-i", std::format("{}:", device.index), bp::std_err > is); //This causes an error, which causes ffmpeg to print out the proper resolutions
+			for (std::string line; !is.eof() && std::getline(is, line);){
+				std::smatch match;
+				if(!std::regex_match(line, match, size_regex)){
+					continue;
+				}
+
+				device.size[0]=stoi(match.str(1));
+				device.size[1]=stoi(match.str(2));
+				device.framerate=int(stof(match.str(3)));
+				break; //Only get the first valid resolution
+			}
+
+			c.wait();
+			
+			
+			id++;
+
 
 		}
 
@@ -430,8 +436,8 @@ int main(){
 		
 		auto server=asio_server_init(2);
 		for (;;){
-			auto conn=asio_server_connect(server);
-			threads.emplace(handleConn, conn);
+			auto conn=asio_server_accept(server);
+			threads.emplace_back(handleConn, conn);
 		}
 		for(auto& t: threads){
 			t.join();
