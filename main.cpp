@@ -74,7 +74,6 @@ typedef struct Device {
 					process=bp::child(ffmpeg, args(), bp::std_in < os);
 				}
 
-				cv.wait(lk, [&](){return (procs_mode & 2)==2 ;}); //Wait for the ffmpeg process to open the file
 			#else
 				process=bp::child(ffmpeg, args(), bp::std_out > is);
 			#endif
@@ -304,6 +303,8 @@ std::unordered_map<int, Device> available_devices; //All devices available to ba
 			
 			{
 			std::unique_lock lk(device.mu);
+
+			device.cv.wait(lk, [&](){return (device.procs_mode & 2)==2 ;}); //Wait for the ffmpeg process to open the file, before checking other processes --- ffmpeg has to write to the file before others can read from the file
 			device.cv.wait(lk, [&] { return (device.procs_mode & 1)==1;});
 			}
 
