@@ -65,7 +65,7 @@ typedef struct Device {
 	}
 	
 	void start(bool timeout = false){
-		mu.lock();
+		std::unique_lock lk(mu);
 		if (!started){
 			#ifdef CLIENT
 				if (timeout){
@@ -74,15 +74,12 @@ typedef struct Device {
 					process=bp::child(ffmpeg, args(), bp::std_in < os);
 				}
 
-				std::unique_lock lk(mu);
-				cv.wait(lk, [&](){return num_procs >= 0;}); //Wait for the number of things reading to it to be at least 1 (we had to take into account the -1)
+				cv.wait(lk, [&](){return (procs_mode & 2)==2 ;}); //Wait for the ffmpeg process to open the file
 			#else
 				process=bp::child(ffmpeg, args(), bp::std_out > is);
 			#endif
 			started=true;
 		}
-
-		mu.unlock();
 
 	}
 	
@@ -143,7 +140,7 @@ typedef struct Device {
 
 		int framerate = 0;
 	#else
-		std::atomic<int> num_procs = 0; //Number of programs that actively have the file open
+		std::atomic<int> procs_mode = 0; //[a][b] --- [a] whether the current process has the file open. [b] --- whether any other process has it open
 		
 		bp::opstream os; //For piping from a socket to the stdin of ffmpeg
 
@@ -252,17 +249,21 @@ std::unordered_map<int, Device> available_devices; //All devices available to ba
 	void countOpenHandles(Device& device){ //Polling is a dirty hack, but I'm not sure there's a better way
 		for(;;){
 			bp::ipstream is;
-			int procs=0;
+			device.mu.lock();
+			auto pid=device.process.id();
+			device.mu.unlock();
+
+			int mode=0;
 			bp::child c(bp::search_path("lsof"), "-t", device.file, bp::std_out > is);
 
 			for(std::string line; is.good() && std::getline(is, line) && !line.empty();){
-				procs++;
+				mode |= (stoul(line)==pid ? 2 : 1);
 			}
 
 			c.wait();
-
-			device.num_procs=procs-1;
-
+			
+			device.procs_mode=mode;
+			printf("%i\n", device.procs_mode.load());
 			device.cv.notify_one();
 
 			std::this_thread::sleep_for(std::chrono::seconds(5));
@@ -303,7 +304,7 @@ std::unordered_map<int, Device> available_devices; //All devices available to ba
 			
 			{
 			std::unique_lock lk(device.mu);
-			device.cv.wait(lk, [&] { return device.num_procs > 0;});
+			device.cv.wait(lk, [&] { return (device.procs_mode & 1)==1;});
 			}
 
 			client=asio_connect(2);
@@ -317,7 +318,7 @@ std::unordered_map<int, Device> available_devices; //All devices available to ba
 			device.stop();
 			device.start();
 			while(true){
-				if (device.num_procs<= 0){
+				if (device.procs_mode & 1 !=1){
 					break;
 				}
 				asio_read(client, &buf, &len, &err);
