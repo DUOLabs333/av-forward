@@ -413,10 +413,10 @@ int main(){
 			constexpr auto device_header_format = "AVFoundation {} devices:";
 
 
-			if (std::regex_match(line, regex_header+std::format(device_header_format,"video"))){
+			if (std::regex_match(line, std::regex(regex_header+std::format(device_header_format,"video")))){
 					mode=0;
 					continue;
-			} else if (std::regex_match(line, regex_header+std::format(device_header_format,"audio"))){
+			} else if (std::regex_match(line, std::regex(regex_header+std::format(device_header_format,"audio")))){
 					mode=1;
 					continue;
 			}
