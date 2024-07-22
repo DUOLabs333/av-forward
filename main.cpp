@@ -213,13 +213,13 @@ std::unordered_map<int, Device> available_devices; //All devices available to ba
 	void handleDevice(int id){ //A thread on the server is writing to multiple connections at a time
 		auto& device=available_devices[id];
 
-		device.buf.resize(device.size[0]*device.size[1]);
+		device.buf.resize(4096);
 
 		for(;;){
 			std::unique_lock lk(device.mu);
 			device.cv.wait(lk, [&]{return !device.conns.empty();});
 			
-			device.is.readsome(device.buf.data(), device.buf.size());
+			device.is.read(device.buf.data(), device.buf.size()); //We must read instead of readsome as it seems that ffmpeg only writes when a read is initiated
 			
 			
 			if(device.restart()){ //Runs through the loop again if the process has died
@@ -304,7 +304,7 @@ std::unordered_map<int, Device> available_devices; //All devices available to ba
 			{
 			std::unique_lock lk(device.mu);
 
-			device.cv.wait(lk, [&](){return (device.procs_mode & 2)==2 ;}); //Wait for the ffmpeg process to open the file, before checking other processes --- ffmpeg has to write to the file before others can read from the file
+			device.cv.wait(lk, [&](){return (device.procs_mode & 2)==2;}); //Wait for the ffmpeg process to open the file, before checking other processes --- ffmpeg has to write to the file before others can read from the file
 			device.cv.wait(lk, [&] { return (device.procs_mode & 1)==1;});
 			}
 
