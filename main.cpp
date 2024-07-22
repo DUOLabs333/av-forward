@@ -1,5 +1,6 @@
 #include <asio_c.h>
 #include <boost/process.hpp>
+#include <boost/process/pipe.hpp>
 #include <condition_variable>
 #include <csignal>
 #include <regex>
@@ -98,7 +99,12 @@ typedef struct Device {
 		if(started){
 			process.terminate();
 			process.wait();
-			stream().clear();
+			#ifdef CLIENT
+				stream()=bp::opstream();
+			#else
+				stream()=bp::ipstream();
+			#endif
+
 			started=false;
 			
 		}
@@ -112,7 +118,6 @@ typedef struct Device {
 		if(!stream().good()){
 			stop();
 			start();
-			stream().clear();
 			restarted=true;
 		}
 
@@ -258,6 +263,8 @@ std::unordered_map<int, Device> available_devices; //All devices available to ba
 
 			device.num_procs=procs-1;
 
+			device.cv.notify_one();
+
 			std::this_thread::sleep_for(std::chrono::seconds(5));
 		}
 	}
@@ -338,7 +345,8 @@ void connectToServer(){
 	std::vector<std::thread> threads;
 	
 	uint8_t info[2];
-
+	
+	bp::system("sudo modprobe -r v4l2loopback"); //Done because I got tired of manually deleting the devices when the program crashed. Comment this out if you use loopback for something else, as this line will delete all loopback devices
 	bp::system("sudo modprobe v4l2loopback");
 
 	while (true){
