@@ -1,6 +1,0 @@
-github.com/diamondburned/lsof v0.0.0-20140904123317-31f6681b6110 h1:yK3mhX6LWVhnp4hBy35XwWDP87x8oCI2YbWQ5Wn7gKE=
-github.com/diamondburned/lsof v0.0.0-20140904123317-31f6681b6110/go.mod h1:8lQx++/eNdiMW1AwKAI2JN0+7fZCrhDM1fJPWgsmOvQ=
-github.com/diamondburned/lsof v0.0.0-20200907184325-179c56e74adf h1:QHKKkcMJNX5oYhxVWGRIbjjzti+IFtfF9wH2qL/djU4=
-github.com/diamondburned/lsof v0.0.0-20200907184325-179c56e74adf/go.mod h1:/JIpsaoD2FpUd532Lm/Y+SZ0nMV3zquWgh+Rp8yfWcc=
-github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
-github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=

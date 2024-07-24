@@ -1,7 +1,8 @@
 av-forward: Stream webcam between a macOS host and a Linux guest
 
 How to compile:
-	Just do `python ../tools/build.py main` in the project directory.
+	1. Run `python ../tools/build.py process`
+	2. Run `python ../tools/build.py main`
 
 How to use:
 	On the host:
@@ -9,7 +10,7 @@ How to use:
 		Run `./av-forward`.
 
 	In the guest:
-		* You need lsof, ffmpeg, v4l2loopback-dkms, and v4l2loopback-utils installed.
+		* You need lsof, ffmpeg, pulseaudio, v4l2loopback-dkms, and v4l2loopback-utils installed.
 		Run `sudo ./av-forward`.
 
 	That's it! The webcam will automatically turn off and on, depending on whether the guest is actively using it.

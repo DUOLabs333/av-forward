@@ -3,3 +3,4 @@ av-forward
 *.o
 b2
 external/
+__pycache__/
