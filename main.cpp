@@ -44,8 +44,11 @@ typedef struct Device {
 	auto args(){ //Stream video/audio I/O using ffmpeg 
 		 if (type==AUDIO){
 			#ifdef CLIENT
+				return; //We don't use ffmpeg for this part
 			#else
+				return bp::args({"-f", "avfoundation", "-i", std::format(":{}",index), "-ar", "16000", "-ac", "1", "-f", "s16le", "-"});
 			#endif
+
 		 }else if (type==VIDEO){
 			#ifdef CLIENT
 				return bp::args({"-f", "mpegts", "-fflags", "nobuffer", "-flags", "low_delay", "-i", "-", "-f", "v4l2", file});
@@ -58,7 +61,9 @@ typedef struct Device {
 	void delete_file(){ //This really should be something that runs at startup
 		#ifdef CLIENT
 			if (type==VIDEO){
-				bp::system(bp::search_path("sudo"), "v4l2loopback-ctl", "delete", file);
+				bp::system(std::format("sudo v4l2loopback-ctl delete {}", file));
+			}else if (type==AUDIO){
+				bp::system(std::format("pactl unload-module {}", module));
 			}
 		#endif
 
@@ -68,11 +73,13 @@ typedef struct Device {
 		std::unique_lock lk(mu);
 		if (!started){
 			#ifdef CLIENT
-				if (timeout){
-					process=bp::child(ffmpeg, bp::args({"-f", "lavfi", "-i", std::format("color=size={}x{}:rate={}:color=black", size[0], size[1], 25),"-f", "v4l2", file}));
-				}else{
-					process=bp::child(ffmpeg, args(), bp::std_in < os);
-				}
+				if (type==VIDEO){
+					if (timeout){
+						process=bp::child(ffmpeg, bp::args({"-f", "lavfi", "-i", std::format("color=size={}x{}:rate={}:color=black", size[0], size[1], 25),"-f", "v4l2", file}));
+					}else{
+						process=bp::child(ffmpeg, args(), bp::std_in < os);
+					}
+				} //We don't need to do anything for microphones
 
 			#else
 				process=bp::child(ffmpeg, args(), bp::std_out > is);
@@ -144,6 +151,10 @@ typedef struct Device {
 		bp::opstream os; //For piping from a socket to the stdin of ffmpeg
 
 		std::string file;
+
+		std::string module;
+
+		uint64_t hash;
 
 	#endif
 	
@@ -252,14 +263,38 @@ std::unordered_map<int, Device> available_devices; //All devices available to ba
 			auto pid=device.process.id();
 			device.mu.unlock();
 
-			int mode=0;
-			bp::child c(bp::search_path("lsof"), "-t", device.file, bp::std_out > is);
+			int mode;
 
-			for(std::string line; is.good() && std::getline(is, line) && !line.empty();){
-				mode |= (stoul(line)==pid ? 2 : 1);
+			if(device.type==VIDEO){
+				mode=0;
+				bp::child c(bp::search_path("lsof"), "-t", device.file, bp::std_out > is);
+
+				for(std::string line; is.good() && std::getline(is, line) && !line.empty();){
+					mode |= (stoul(line)==pid ? 2 : 1);
+
+					if(mode==3){ //No need to continue, as everything that could be set has been set
+						c.terminate();
+						break;
+					}
+				}
+
+				c.wait();
+			}else if (device.type==AUDIO){
+				mode=2; //This part doesn't matter, as any wait that would depend on this must have the device file open
+
+				bp::ipstream is;
+				bp::child c(bp::search_path("pacmd"), "list-source-outputs", bp::std_out > is);
+	
+				std::regex source_regex(std::format(R"#(\s+source:\s+\d+\<{}\>\s*)#", device.hash));
+				for(std::string line; is.good() && std::getline(is, line)){
+					if(std::regex_match(line, source_regex) ){
+						mode|=1;
+						c.terminate();
+						break;
+					}
+				}
+
 			}
-
-			c.wait();
 			
 			device.procs_mode=mode;
 			//printf("%i\n", device.procs_mode.load()); //Debug statement
@@ -279,7 +314,7 @@ std::unordered_map<int, Device> available_devices; //All devices available to ba
 		char* buf;
 		int len;
 		
-		while(true){ //Creating virtual device
+		while(true){ //Creating virtual device. Note that we don't actually check whether the startup commands succeed, but only that the relevant members are initialized.
 			bp::ipstream is;
 			if (device.type==VIDEO){
 				bp::child c(bp::search_path("sudo"), "v4l2loopback-ctl", "add", "--name", device.name, "--exclusive-caps", "1", bp::std_out > is);
@@ -290,6 +325,18 @@ std::unordered_map<int, Device> available_devices; //All devices available to ba
 					break;
 				}
 			}else if (device.type == AUDIO){
+				device.hash=std::hash(device.name);
+				device.file=std::format(R"#(file=/tmp/{}.av.sock")#", device.hash);
+				bp::ipstream is;
+				bp::child c(bp::search_path("pactl"), "load-module", "module-pipe-source", std::format("source_name={}", device.hash), std::format("file={}",device.file), "format=s16le", "rate=16000", "channels=1");
+				std::getline(is, device.module);
+				c.wait();
+				if(!is.fail()){
+					break;
+				}
+				
+				auto escaped_name=std::regex_replace(device.name, std::regex(R"#(\")#"), std::regex(R"#(\\")#"));
+				bp::system(std::format(R"#(pacmd update-source-proplist {} device.description="{}"#)", device.hash, escaped_name));
 			}
 		}
 
@@ -301,9 +348,22 @@ std::unordered_map<int, Device> available_devices; //All devices available to ba
 			
 			device.start(true); //Start timeout process, and show black screen
 			
+			int fd;
 			{
 			std::unique_lock lk(device.mu);
+			if(device.type==AUDIO){
+				while(true){ //Wait for file to become available
+					fd=open(device.file.c_str(), O_WRONLY);
+					if (fd!=-1){
+						break;
+					}
+				}
+ 
+				fcntl(fd, F_SETPIPE_SZ, PIPE_BUF); //Very important in minimizing delay in the virtual source
+				int flags=fcntl(fd, F_GETFL);
+				fcntl(fd, F_SETFL,  flags | O_NONBLOCK);
 
+			}
 			device.cv.wait(lk, [&](){return (device.procs_mode & 2)==2;}); //Wait for the ffmpeg process to open the file, before checking other processes --- ffmpeg has to write to the file before others can read from the file
 			device.cv.wait(lk, [&] { return (device.procs_mode & 1)==1;});
 			}
@@ -327,7 +387,13 @@ std::unordered_map<int, Device> available_devices; //All devices available to ba
 					break;
 				}
 
-				device.os.write(buf, len);
+				if(device.type==VIDEO){
+					device.os.write(buf, len);
+				}else if (device.type==AUDIO){
+					for(int i=0; i < len; i+=PIPE_BUF){ //Not buffered, which removes most of the latency between host and guest
+						write(fd, buf+i, std::min(PIPE_BUF, len-i));
+					}
+				}
 
 				device.restart(); //Restarts ffmpeg process if its stdin is closed
 
@@ -349,6 +415,9 @@ void connectToServer(){
 	uint8_t info[2];
 	
 	bp::system("sudo modprobe -r v4l2loopback"); //Done because I got tired of manually deleting the devices when the program crashed. Comment this out if you use loopback for something else, as this line will delete all loopback devices
+
+	bp::system("pactl unload-module module-pipe-source"); //See above
+
 	bp::system("sudo modprobe v4l2loopback");
 
 	while (true){
@@ -437,9 +506,6 @@ int main(){
 				continue;
 			}
 
-			if(mode==1){
-				continue; //Just for now, until I figure out how to get audio working (use nc as a makeshift server for testing). Once I do, remove this conditional (and add support for getting bitrate info/ anything else that is needed below
-			}
 
 			auto& device=available_devices[id];
 			device.index=stoi(match.str(1));
@@ -452,22 +518,23 @@ int main(){
 
 			device.type=static_cast<DeviceType>(mode);
 			
+			if(mode==0){
+				bp::ipstream is;
+				bp::child c(ffmpeg, "-f", "avfoundation", "-video_size", "1x1", "-i", std::format("{}:", device.index), bp::std_err > is); //This causes an error, which causes ffmpeg to print out the proper resolutions
+				for (std::string line; !is.eof() && std::getline(is, line);){
+					std::smatch match;
+					if(!std::regex_match(line, match, size_regex)){
+						continue;
+					}
 
-			bp::ipstream is;
-			bp::child c(ffmpeg, "-f", "avfoundation", "-video_size", "1x1", "-i", std::format("{}:", device.index), bp::std_err > is); //This causes an error, which causes ffmpeg to print out the proper resolutions
-			for (std::string line; !is.eof() && std::getline(is, line);){
-				std::smatch match;
-				if(!std::regex_match(line, match, size_regex)){
-					continue;
+					device.size[0]=stoi(match.str(1));
+					device.size[1]=stoi(match.str(2));
+					device.framerate=int(stof(match.str(3)));
+					break; //Only get the first valid resolution
 				}
 
-				device.size[0]=stoi(match.str(1));
-				device.size[1]=stoi(match.str(2));
-				device.framerate=int(stof(match.str(3)));
-				break; //Only get the first valid resolution
+				c.wait();
 			}
-
-			c.wait();
 			
 			
 			id++;
