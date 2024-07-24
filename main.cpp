@@ -391,7 +391,7 @@ std::unordered_map<int, Device> available_devices; //All devices available to ba
 
 				if(device.type==VIDEO){
 					device.os.write(buf, len);
-				}else if (device.type==AUDIO){
+				}else if (device.type==AUDIO){ //Ideas taken from here: https://dzx.fr/blog/low-latency-microphone-audio-android/#conclusion
 					for(int i=0; i < len; i+=PIPE_BUF){ //Not buffered, which removes most of the latency between host and guest
 						write(fd, buf+i, std::min(PIPE_BUF, len-i));
 					}
