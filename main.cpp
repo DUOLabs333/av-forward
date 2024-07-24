@@ -285,7 +285,7 @@ std::unordered_map<int, Device> available_devices; //All devices available to ba
 				bp::ipstream is;
 				bp::child c(bp::search_path("pacmd"), "list-source-outputs", bp::std_out > is);
 	
-				std::regex source_regex(std::format(R"#(\s+source:\s+\d+\<{}\>\s*)#", device.hash));
+				std::regex source_regex(std::format(R"#(\s+source:\s+\d+\s+\<{}\>\s*)#", device.hash));
 				for(std::string line; is.good() && std::getline(is, line);){
 					if(std::regex_match(line, source_regex) ){
 						mode|=1;
@@ -314,30 +314,32 @@ std::unordered_map<int, Device> available_devices; //All devices available to ba
 		char* buf;
 		int len;
 		
-		while(true){ //Creating virtual device. Note that we don't actually check whether the startup commands succeed, but only that the relevant members are initialized.
+		while(true){ //Creating virtual device. Note that we don't actually check whether the startup commands succeed, but only that the relevant device members are initialized.
 			bp::ipstream is;
 			if (device.type==VIDEO){
 				bp::child c(bp::search_path("sudo"), "v4l2loopback-ctl", "add", "--name", device.name, "--exclusive-caps", "1", bp::std_out > is);
 
 				std::getline(is, device.file);
 				c.wait();
-				if(!is.fail()){
-					break;
+				if(is.fail()){
+					continue;
 				}
 			}else if (device.type == AUDIO){
 				device.hash=std::hash<std::string>()(device.name);
-				device.file=std::format(R"#(file=/tmp/{}.av.sock")#", device.hash);
+				device.file=std::format(R"#(/tmp/{}.av.sock)#", device.hash);
 				bp::ipstream is;
-				bp::child c(bp::search_path("pactl"), "load-module", "module-pipe-source", std::format("source_name={}", device.hash), std::format("file={}",device.file), "format=s16le", "rate=16000", "channels=1");
+				bp::child c(bp::search_path("pactl"), "load-module", "module-pipe-source", std::format("source_name={}", device.hash), std::format("file={}",device.file), "format=s16le", "rate=16000", "channels=1", bp::std_out > is);
 				std::getline(is, device.module);
 				c.wait();
-				if(!is.fail()){
-					break;
+				if(is.fail()){
+					continue;
 				}
 				
+
 				auto escaped_name=std::regex_replace(device.name, std::regex(R"#(\")#"), R"#(\")#");
 				bp::system(std::format(R"#(pacmd update-source-proplist {} device.description="{}")#", device.hash, escaped_name));
 			}
+			break;
 		}
 
 		//Call lsof/fuser every 10 s, and update the count
