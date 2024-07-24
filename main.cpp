@@ -44,7 +44,7 @@ typedef struct Device {
 	auto args(){ //Stream video/audio I/O using ffmpeg 
 		 if (type==AUDIO){
 			#ifdef CLIENT
-				return; //We don't use ffmpeg for this part
+				return bp::args({""}); //We don't use ffmpeg for this part
 			#else
 				return bp::args({"-f", "avfoundation", "-i", std::format(":{}",index), "-ar", "16000", "-ac", "1", "-f", "s16le", "-"});
 			#endif
@@ -286,7 +286,7 @@ std::unordered_map<int, Device> available_devices; //All devices available to ba
 				bp::child c(bp::search_path("pacmd"), "list-source-outputs", bp::std_out > is);
 	
 				std::regex source_regex(std::format(R"#(\s+source:\s+\d+\<{}\>\s*)#", device.hash));
-				for(std::string line; is.good() && std::getline(is, line)){
+				for(std::string line; is.good() && std::getline(is, line);){
 					if(std::regex_match(line, source_regex) ){
 						mode|=1;
 						c.terminate();
@@ -325,7 +325,7 @@ std::unordered_map<int, Device> available_devices; //All devices available to ba
 					break;
 				}
 			}else if (device.type == AUDIO){
-				device.hash=std::hash(device.name);
+				device.hash=std::hash<std::string>()(device.name);
 				device.file=std::format(R"#(file=/tmp/{}.av.sock")#", device.hash);
 				bp::ipstream is;
 				bp::child c(bp::search_path("pactl"), "load-module", "module-pipe-source", std::format("source_name={}", device.hash), std::format("file={}",device.file), "format=s16le", "rate=16000", "channels=1");
@@ -335,8 +335,8 @@ std::unordered_map<int, Device> available_devices; //All devices available to ba
 					break;
 				}
 				
-				auto escaped_name=std::regex_replace(device.name, std::regex(R"#(\")#"), std::regex(R"#(\\")#"));
-				bp::system(std::format(R"#(pacmd update-source-proplist {} device.description="{}"#)", device.hash, escaped_name));
+				auto escaped_name=std::regex_replace(device.name, std::regex(R"#(\")#"), R"#(\")#");
+				bp::system(std::format(R"#(pacmd update-source-proplist {} device.description="{}")#", device.hash, escaped_name));
 			}
 		}
 
