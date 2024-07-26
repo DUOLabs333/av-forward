@@ -53,7 +53,7 @@ typedef struct Device {
 			#ifdef CLIENT
 				return bp::args({"-f", "mpegts", "-fflags", "nobuffer", "-flags", "low_delay", "-i", "-", "-f", "v4l2", file});
 			#else
-				return bp::args({"-f", "avfoundation", "-framerate", std::to_string(framerate), "-video_size", std::format("{}x{}", size[0], size[1]), "-i", std::format("{}:", index), "-vcodec", "mpeg4", "-f", "mpegts", "-"});
+				return bp::args({"-f", "avfoundation", "-framerate", std::to_string(framerate), "-video_size", std::format("{}x{}", size[0], size[1]), "-i", std::format("{}:", index), "-b:v", "9999k", "-vcodec", "mpeg4", "-f", "mpegts", "-"});
 			#endif
 		}
 	}
