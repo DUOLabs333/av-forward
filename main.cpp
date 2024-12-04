@@ -284,7 +284,8 @@ std::unordered_map<int, Device> available_devices; //All devices available to ba
 
 				bp::ipstream is;
 				bp::child c(bp::search_path("pacmd"), "list-source-outputs", bp::std_out > is);
-	
+
+				//TODO: We should use "pactl -f json list source-outputs" instead -- if I have to parse this again, it will be too soon.
 				std::regex source_regex(std::format(R"#(\s+source:\s+\d+\s+\<{}\>\s*)#", device.hash));
 				for(std::string line; is.good() && std::getline(is, line);){
 					if(std::regex_match(line, source_regex) ){
